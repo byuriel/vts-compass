@@ -26,15 +26,38 @@ const T = {
   muted:     "#6b5f8a",
 };
 
-// ─── STORAGE ──────────────────────────────────────────────────────────────────
-const STORAGE_KEY = "avtaa_save_v2";
+// ─── SUPABASE STORAGE ─────────────────────────────────────────────────────────
+const SUPA_URL  = "https://xobvmenbenijjspgyzci.supabase.co";
+const SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhvYnZtZW5iZW5pampzcGd5emNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5OTkxNDcsImV4cCI6MjA5NTU3NTE0N30.K7u2lVHOBa8vK7f4xKHx-LrmjqyJrwTFW8Yhas2TJ5k";
+const SUPA_RECORD_ID = "dimari_main"; // one row per user — change if adding more users
+
+const supaHeaders = {
+  "Content-Type": "application/json",
+  "apikey": SUPA_KEY,
+  "Authorization": `Bearer ${SUPA_KEY}`,
+  "Prefer": "resolution=merge-duplicates",
+};
+
 async function storageSave(data) {
-  try { await window.storage.set(STORAGE_KEY, JSON.stringify(data)); } catch(_) {}
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/progress`, {
+      method: "POST",
+      headers: supaHeaders,
+      body: JSON.stringify({ id: SUPA_RECORD_ID, data, updated_at: new Date().toISOString() }),
+    });
+  } catch(_) {
+    // fail silently — export/import buttons are the fallback
+  }
 }
+
 async function storageLoad() {
   try {
-    const r = await window.storage.get(STORAGE_KEY);
-    return r ? JSON.parse(r.value) : null;
+    const res = await fetch(
+      `${SUPA_URL}/rest/v1/progress?id=eq.${SUPA_RECORD_ID}&select=data`,
+      { headers: supaHeaders }
+    );
+    const rows = await res.json();
+    return rows?.[0]?.data || null;
   } catch(_) { return null; }
 }
 
@@ -265,8 +288,8 @@ async function simplify(text) {
 // ─── SAVE INDICATOR ───────────────────────────────────────────────────────────
 function SaveIndicator({saved}) {
   return (
-    <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"8px 14px",borderRadius:20,background:saved?T.greenSoft:T.violetSoft,border:`1px solid ${saved?T.green:T.violet}`,fontSize:12,color:saved?T.green:T.violetMid,fontWeight:700,transition:"all 0.4s",opacity:saved?1:0.6}}>
-      {saved?"✓ Progress saved":"○ Saving..."}
+    <div style={{position:"fixed",bottom:20,right:20,zIndex:999,padding:"8px 14px",borderRadius:20,background:saved?T.greenSoft:T.violetSoft,border:`1px solid ${saved?T.green:T.violet}`,fontSize:12,color:saved?T.green:T.violetMid,fontWeight:700,transition:"all 0.4s",display:"flex",alignItems:"center",gap:6}}>
+      {saved ? <>☁️ Saved to cloud</> : <><span style={{display:"inline-block",width:10,height:10,border:`2px solid ${T.violetMid}`,borderTop:`2px solid transparent`,borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>Syncing...</>}
     </div>
   );
 }
@@ -362,7 +385,7 @@ const CHECKLIST_ITEMS = {
   "Folder 2 — Blinded Documents (Applicant # Only, Due Dec 31)":[
     {id:"f2a",text:"Employment Location Form → [applicant#.location]"},
     {id:"f2b",text:"Case Logs: 50–60 cases, strongly recommend all 60 → [applicant#.caselog.pdf]"},
-    {id:"f2c",text:"ASA I/II cases: maximum 12, placed on FIRST 4 pages ONLY"},
+    {id:"f2c",text:"ASA I/II cases: maximum 12, within first 12 logs (mark SKILLS ONLY if beyond)"},
     {id:"f2d",text:"Sedation-only cases: maximum 3 (small animal track)"},
     {id:"f2e",text:"All drug doses written as mg or mcg/kg — never just mL"},
     {id:"f2f",text:"Location dropdown filled in on every single case log entry"},
@@ -501,45 +524,282 @@ function ReadinessTab({checked,caseLogCount,asaCounts,sedationOnly,reportScores,
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 3 — REJECTION ANALYSIS
 // ═══════════════════════════════════════════════════════════════════════════════
-const REJECTION_SYSTEM=`You are an expert AVTAA VTS (Anesthesia & Analgesia) application consultant helping a technician analyze why their previous application was rejected and exactly how to fix it for their second attempt.
+function buildRejectionSystem() {
+  return `You are a senior AVTAA VTS (Anesthesia & Analgesia) application specialist. You have reviewed hundreds of failed and successful applications and know exactly what the credentials committee looks for.
 
-When given a rejection overview from AVTAA, you will:
-1. Identify every specific deficiency mentioned
-2. Explain clearly what was wrong in plain language
-3. Give a specific, actionable fix for each deficiency
-4. Rate how hard each fix is (Easy / Moderate / Significant effort)
-5. Prioritize the fixes by impact on the second application
-6. End with a "Second Attempt Strategy" — 3-5 key things to focus on
+A veterinary technician is on her SECOND attempt after being rejected. You are analyzing her rejection materials to build a comprehensive correction plan AND a personalized "mistake memory" she can apply to every future case log and case report she writes.
 
-Be direct, specific, and encouraging. This person is trying again and needs concrete guidance.`;
+YOUR ANALYSIS MUST BE EXHAUSTIVE. Read every word of the rejection materials carefully. Do not summarize or skip any deficiency — every single issue mentioned must be addressed.
+
+STRUCTURE YOUR RESPONSE EXACTLY AS FOLLOWS:
+
+═══════════════════════════════════════════
+REJECTION ANALYSIS REPORT
+═══════════════════════════════════════════
+
+OVERVIEW
+Write 2-3 sentences summarizing the overall picture of why this application was rejected and what the committee's main concerns were.
+
+═══════════════════════════════════════════
+SECTION 1 — EVERY DEFICIENCY IDENTIFIED
+═══════════════════════════════════════════
+For each deficiency found, format exactly like this:
+
+DEFICIENCY #[number]:
+Category: [Case Logs / Case Reports / CE Hours / Skills / Formatting / Other]
+What AVTAA said: [quote or close paraphrase of their exact language]
+What this actually means: [plain English explanation of the problem]
+Why it caused rejection: [explain the committee's reasoning]
+Effort to fix: [Easy / Moderate / Significant]
+Specific fix: [exactly what she needs to do differently — be concrete and detailed]
+
+═══════════════════════════════════════════
+SECTION 2 — CASE LOG SPECIFIC FAILURES
+═══════════════════════════════════════════
+If the rejection mentions case log issues, list every specific thing that was wrong with the case logs. For each:
+- What was missing or wrong
+- Which cases were likely affected (if mentioned)
+- The exact standard she needed to meet
+- Word-for-word example of how a correct entry would read
+
+═══════════════════════════════════════════
+SECTION 3 — CASE REPORT SPECIFIC FAILURES
+═══════════════════════════════════════════
+If the rejection mentions case report issues, analyze each report section that was flagged. For each:
+- Which section failed (Signalment, Complications, Plan, Intra-op, Recovery, etc.)
+- What the committee found lacking
+- The specific depth and content level required
+- What a passing version of that section would contain
+
+═══════════════════════════════════════════
+SECTION 4 — PERSONALIZED MISTAKE MEMORY
+(THE MOST IMPORTANT SECTION)
+═══════════════════════════════════════════
+Based on her specific rejection reasons, create a personalized checklist of mistakes she personally made that she must NEVER repeat. This is her individual pattern of errors. Format as:
+
+MY PERSONAL MISTAKE PATTERN — Things I Must Fix Every Time:
+
+For EVERY CASE LOG she writes going forward:
+□ [specific thing she personally missed — be very concrete]
+□ [another personal mistake pattern]
+[continue for all case log issues found]
+
+For EVERY CASE REPORT she writes going forward:
+□ [specific thing she personally missed]
+□ [another personal mistake pattern]
+[continue for all case report issues found]
+
+Red flags that previously got her rejected — she must double-check these before submitting:
+⚠ [specific red flag from her rejection]
+⚠ [another red flag]
+[continue for all]
+
+═══════════════════════════════════════════
+SECTION 5 — SECOND ATTEMPT PRIORITY PLAN
+═══════════════════════════════════════════
+Rank order the top 5 things she must fix first, with reasoning for why each is highest priority. Include time estimates for each fix.
+
+PRIORITY 1: [title]
+Why: [reasoning]
+Time needed: [estimate]
+Exactly how to fix it: [concrete steps]
+
+[repeat for priorities 2-5]
+
+═══════════════════════════════════════════
+SECTION 6 — WHAT SHE DID RIGHT
+═══════════════════════════════════════════
+Identify anything in the rejection materials that suggests she was close or had strengths. Be specific and genuine — this is to help her confidence and know what NOT to change.
+
+═══════════════════════════════════════════
+SECTION 7 — DIRECT MESSAGE TO SUNNY DEE
+═══════════════════════════════════════════
+Write a brief, direct, honest and encouraging message specifically to her about what this rejection means and what she needs to hear to succeed on her second attempt. Be real with her — not generic encouragement, but specific truth about what will make the difference.`;
+}
 
 function RejectionTab() {
-  const [text,setText]=useState("");
-  const [result,setResult]=useState("");
-  const [loading,setLoading]=useState(false);
-  const analyze=async()=>{
-    if(!text.trim())return;
-    setLoading(true);
-    const r=await callClaude(REJECTION_SYSTEM,`Here is my AVTAA rejection overview from my previous application attempt:\n\n${text}`);
-    setResult(r);setLoading(false);
+  const blank = () => ({ file:null, phase:"idle", step:"", text:"", result:"", errMsg:"" });
+  const [state, setState] = useState(blank());
+  const [manualText, setManualText] = useState("");
+  const [inputMode, setInputMode] = useState("file"); // "file" | "text"
+  const patch = (obj) => setState(prev => ({...prev, ...obj}));
+
+  const onFile = (f) => setState({...blank(), file:f, phase:"ready"});
+
+  const run = async (textOverride) => {
+    const content = textOverride || manualText;
+    if (!content?.trim() && !state.file) return;
+
+    patch({phase:"running", step:"Reading rejection materials...", result:"", errMsg:""});
+
+    try {
+      let text = content || "";
+
+      if (state.file && !textOverride) {
+        patch({step:"Extracting text from rejection document..."});
+        if (state.file.name.endsWith(".pdf") || state.file.type.startsWith("image/")) {
+          text = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onerror = () => reject(new Error("Could not read file"));
+            reader.onload = async (e) => {
+              try {
+                const isImage = state.file.type.startsWith("image/");
+                const mediaType = isImage ? state.file.type : "application/pdf";
+                const base64 = e.target.result.split(",")[1];
+                const res = await fetch("https://api.anthropic.com/v1/messages", {
+                  method:"POST", headers:{"Content-Type":"application/json"},
+                  body: JSON.stringify({
+                    model:"claude-sonnet-4-20250514", max_tokens:2000,
+                    messages:[{role:"user", content:[
+                      {type: isImage ? "image" : "document",
+                       source:{type:"base64", media_type:mediaType, data:base64}},
+                      {type:"text", text:"Extract ALL text from this AVTAA rejection letter or feedback document exactly as written. Include every word, number, and detail. Return only the document text."}
+                    ]}]
+                  })
+                });
+                const d = await res.json();
+                resolve(d.content?.map(b=>b.text||"").join("") || "");
+              } catch(e) { reject(e); }
+            };
+            if (state.file.type.startsWith("image/")) {
+              reader.readAsDataURL(state.file);
+            } else {
+              reader.readAsDataURL(state.file);
+            }
+          });
+        } else {
+          text = await state.file.text();
+        }
+      }
+
+      if (!text.trim()) throw new Error("No text could be extracted. Try uploading a different format or pasting the text manually.");
+
+      patch({step:"Running deep rejection analysis — building your personalized fix plan...", text});
+
+      const result = await callClaude(
+        buildRejectionSystem(),
+        `Analyze this AVTAA VTS rejection material thoroughly. Build a complete correction plan and personalized mistake memory:\n\n${text.slice(0, 12000)}`,
+        2400
+      );
+
+      patch({phase:"done", step:"", result, text});
+
+    } catch(err) {
+      patch({phase:"error", step:"", errMsg: err.message || "Analysis failed — please try again"});
+    }
   };
+
   return (
     <div>
       <div style={S.sectionTitle}>Rejection Analysis</div>
-      <div style={S.sectionSub}>Paste the rejection overview AVTAA emailed you after your first attempt. Claude maps every deficiency to a specific fix for this second application.</div>
-      <div style={{...S.card,background:T.amberSoft,border:`1px solid ${T.amber}44`,marginBottom:24}}>
-        <div style={{fontSize:13,color:T.amber,fontWeight:700,marginBottom:6}}>📧 Where to find your rejection overview</div>
-        <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>After your first application was rejected, AVTAA sent an email with a brief overview of deficiencies. Search your inbox for emails from <strong style={{color:T.text}}>avtaa.vts.credential@gmail.com</strong> — paste the contents of that email below.</div>
+      <div style={S.sectionSub}>
+        Upload or paste the rejection letter AVTAA sent after your first attempt. Claude runs a deep analysis — mapping every deficiency, building a personalized mistake memory, and creating a priority fix plan for your second attempt.
       </div>
-      <div style={S.card}>
-        <label style={S.label}>Paste Your AVTAA Rejection Email / Overview</label>
-        <textarea style={{...S.textarea,minHeight:200}} placeholder={"Paste the rejection overview from AVTAA here. It might say things like:\n\n'Case reports lacked sufficient detail in the anesthesia plan section...'\n'Drug doses listed in mL only — must include mg/kg...'\n'Skills not adequately described in case log context...'\n\nPaste whatever AVTAA sent you — even partial notes work."} value={text} onChange={e=>setText(e.target.value)}/>
-        <div style={{marginTop:14}}>
-          <button style={S.btn("primary")} onClick={analyze} disabled={loading||!text.trim()}>
-            {loading?<><span style={S.spinner}/>Analyzing Rejection...</>:"🔍 Analyze & Build Fix Plan"}
+
+      {/* Input mode toggle */}
+      <div style={{display:"flex",gap:10,marginBottom:20}}>
+        {[["file","📎 Upload File"],["text","✏️ Paste Text"]].map(([mode,label])=>(
+          <button key={mode} onClick={()=>setInputMode(mode)}
+            style={{padding:"9px 20px",borderRadius:8,border:`1px solid ${inputMode===mode?T.violet:T.border}`,background:inputMode===mode?T.violetSoft:"transparent",color:inputMode===mode?T.violetMid:T.muted,fontSize:13,fontWeight:700,cursor:"pointer",transition:"all 0.15s"}}>
+            {label}
           </button>
+        ))}
+      </div>
+
+      {/* Info card */}
+      <div style={{...S.card,background:T.amberSoft,border:`1px solid ${T.amber}44`,marginBottom:20}}>
+        <div style={{fontSize:13,color:T.amber,fontWeight:700,marginBottom:6}}>📧 Where to find your rejection materials</div>
+        <div style={{fontSize:12,color:T.sub,lineHeight:1.7}}>
+          After your application was rejected, AVTAA emailed a feedback overview from <strong style={{color:T.text}}>avtaa.vts.credential@gmail.com</strong>. Upload that email as a PDF, screenshot it as an image, or paste the text directly. The more detail you provide, the more specific the fix plan will be.
         </div>
-        {result&&<AIResult result={result}/>}
+      </div>
+
+      <div style={S.card}>
+        {inputMode === "file" ? (
+          <>
+            <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Upload Rejection Letter</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:16}}>
+              Accepts PDF, images (screenshot of email), or plain text files.
+            </div>
+            <DropZone
+              accept=".pdf,.txt,.png,.jpg,.jpeg,.webp"
+              label="Drop your rejection letter here"
+              sublabel="PDF · Image screenshot · Text file · Click or drag & drop"
+              onFile={onFile}
+              fileName={state.file?.name}
+            />
+            {state.phase==="ready" && (
+              <div style={{marginTop:14}}>
+                <button style={{...S.btn("primary"),padding:"12px 28px"}} onClick={()=>run()}>
+                  🔍 Run Deep Analysis
+                </button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Paste Rejection Text</div>
+            <div style={{fontSize:12,color:T.muted,marginBottom:12}}>
+              Copy and paste everything from the rejection email or feedback document.
+            </div>
+            <textarea
+              style={{...S.textarea,minHeight:220}}
+              placeholder={"Paste the full rejection feedback here. Include everything AVTAA wrote — the more detail the better.\n\nExamples of what it might say:\n• 'Case logs did not demonstrate adequate skill description...'\n• 'Drug doses listed in mL only — mg/kg required...'\n• 'Case report section 3 lacked contingency planning...'\n• 'ASA classification not adequately justified...'\n\nEven partial notes or bullet points will work."}
+              value={manualText}
+              onChange={e=>setManualText(e.target.value)}
+            />
+            <div style={{marginTop:14}}>
+              <button style={{...S.btn("primary"),padding:"12px 28px"}} onClick={()=>run(manualText)} disabled={state.phase==="running"||!manualText.trim()}>
+                🔍 Run Deep Analysis
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Progress */}
+        {state.phase==="running" && (
+          <div style={{marginTop:14,padding:"13px 16px",background:T.violetSoft,border:`1px solid ${T.violet}44`,borderRadius:10,display:"flex",alignItems:"center",gap:10}}>
+            <span style={S.spinner}/>
+            <span style={{fontSize:13,color:T.violetMid,fontWeight:600}}>{state.step}</span>
+          </div>
+        )}
+
+        {/* Error */}
+        {state.phase==="error" && (
+          <div style={{marginTop:14,padding:"13px 16px",background:T.redSoft,border:`1px solid ${T.red}44`,borderRadius:10}}>
+            <div style={{fontSize:13,color:T.red,marginBottom:8}}>❌ {state.errMsg}</div>
+            <button style={{...S.btn("ghost"),fontSize:12,padding:"5px 12px"}} onClick={()=>patch({phase:state.file?"ready":"idle",errMsg:""})}>Try Again</button>
+          </div>
+        )}
+
+        {/* Results */}
+        {state.phase==="done" && state.result && (
+          <>
+            <div style={{marginTop:20,padding:"10px 16px",background:T.greenSoft,border:`1px solid ${T.green}44`,borderRadius:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:13,color:T.green,fontWeight:700}}>✓ Analysis complete — your personalized fix plan is ready</div>
+              <button style={{...S.btn("ghost"),fontSize:11,padding:"5px 12px"}} onClick={()=>run(state.text||manualText)}>🔄 Re-analyze</button>
+            </div>
+            <div style={S.aiBlock}>
+              <div style={{fontSize:10,color:T.violet,fontWeight:700,marginBottom:10,letterSpacing:1}}>REJECTION ANALYSIS — PERSONALIZED FIX PLAN</div>
+              {state.result}
+            </div>
+            <div style={{display:"flex",gap:10,marginTop:12}}>
+              <button style={{...S.btn("ghost"),fontSize:12}} onClick={()=>navigator.clipboard?.writeText(state.result)}>
+                📋 Copy Full Report
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Re-run after done with file mode */}
+        {state.phase==="done" && (
+          <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+            <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Want to analyze different rejection materials?</div>
+            <button style={{...S.btn("ghost"),fontSize:12}} onClick={()=>setState(blank())}>
+              Upload New File
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -564,10 +824,11 @@ ELIGIBILITY AND VOLUME:
 
 ASA DISTRIBUTION RULES:
 - ASA I and II cases combined: maximum 12 total
-- ASA I and II cases MUST be placed on the FIRST 4 pages of the case log form ONLY
-- ASA I and II cases placed anywhere beyond page 4 will be rejected
+- All ASA I and II cases must appear within the FIRST 12 case logs of the submission
+- If any ASA I or II case appears at position 13 or beyond, it MUST be explicitly marked "SKILLS ONLY" — otherwise it is rejected and does not count toward the passing total
 - Sedation-only cases: maximum 3 for small animal track, maximum 3 for large animal track
 - The remaining cases should demonstrate a mix of ASA III, IV, and V patients
+- IMPORTANT: A rejected case log reduces the effective passing count. An applicant can submit 60 logs but still fail if enough are rejected to drop below the 50 minimum — so EVERY log must be complete and correct, not just present
 
 WHAT EACH CASE LOG ENTRY MUST CONTAIN:
 1. Date of the case (month/day/year format)
@@ -603,13 +864,82 @@ COMMON REJECTION REASONS FROM AVTAA:
 - Drug doses listed only in mL without mg/kg conversion
 - Skills listed without contextual description
 - More than 12 ASA I/II cases total
-- ASA I/II cases placed on pages 5 or beyond
+- ASA I/II cases at position 13+ not marked SKILLS ONLY
 - More than 3 sedation-only cases
 - Location dropdown field left blank on any entry
 - Abbreviations used without definition (especially dex, bup, ace, val, prop, tele)
 - Case summary missing pre-op assessment or recovery information
 - No weight listed or weight without units
 - Cases performed before January 1 or after December 31 of the application year
+
+
+KNOWN REJECTION PATTERNS FROM THIS APPLICANT'S PREVIOUS SUBMISSION (Dimari Diaz #2574):
+These are the EXACT mistakes that caused her case logs to be rejected. Check EVERY entry for these:
+
+VITAL SIGNS ERRORS (caused multiple rejections):
+- Writing "BP in the 50's" or "BP tanked" — NOT acceptable. Must use actual MAP/SAP values with units e.g. MAP 52mmHg
+- Writing "ETCO2 in 70's" — must state exact value with units e.g. EtCO2 72mmHg
+- "Maintained appropriate vitals" without actual values — committee cannot confirm knowledge without numbers
+- Missing units on ANY vital sign — every value needs its unit (mmHg, bpm, degrees C, %)
+- Stating hypotension but not providing the MAP or SAP value that triggered the intervention
+
+DRUG AND DOSE ERRORS (caused multiple rejections):
+- Missing doses entirely — e.g. midazolam dose missing in Case Log 58
+- Epidural drugs listed with no doses — ALL epidural drug doses must be stated in mg/kg
+- Giving glycopyrrolate for "hypotension" without stating the HR or BP values — must justify why glyco was the correct choice with the actual numbers
+- Vague clinical reasoning — e.g. "50mcg Fent bolus IV per no one to do TAP block" is unclear; the reasoning for every drug decision must be explicit and professional
+- Using "dexmed" or other shorthand ambiguously — always write dexmedetomidine with dose in mcg/kg
+- Incorrect units on CRIs — e.g. dexmedetomidine CRI must be in mcg/kg/min or mcg/kg/hr, never just mcg
+- KCl concentration in fluids (e.g. Plasmalyte) not specified — all additive concentrations must be stated
+- Missing volumes of blood products when transfusions are given
+
+CLINICAL REASONING AND TECHNIQUE RED FLAGS (committee judges knowledge, not just completeness):
+- Questionable management of hypercapnia — e.g. Case Log 14 used "a mask over ETT to provide less than 100% oxygen to allow hypoxic drive to help vent" with EtCO2 in the 60-70mmHg range; this reflects flawed clinical reasoning, not just a wording problem
+- Stating an intervention "worked" or vitals were "maintained" without the values that prove correct decision-making
+- Any management choice that a board-certified anesthetist would question should be flagged as a knowledge concern, separate from formatting issues
+
+CONFLICTING/INCONSISTENT INFORMATION:
+- Equipment section says NRB circuit but case log says rebreath circuit — must match
+- ASA on case report does not match case log or anesthetic sheet — all three must agree
+- Patient presentation details repeated in Anesthesia Care section instead of clinical reasoning
+
+PE AND ASSESSMENT GAPS:
+- No PE findings provided to justify ASA assignment — must include exam findings AND diagnostics
+- No body weight parameters mentioned — weight with units required for every case
+- "No PE findings" in reason for anesthesia section — must justify ASA with clinical data
+- Vague "depth checks" in the equipment/monitoring section — must specify the actual methods used: palpebral reflex, eye position, jaw tone, etc.
+- No anesthetic depth assessment detail — committee needs to see the specific reflexes and signs monitored
+
+SKILLS DOCUMENTATION ERRORS (caused majority of skill rejections):
+- Just stating a skill was used without describing drug effects or properties (C3 — acepromazine)
+- Administering a drug without describing rationale (C11)
+- Calling propofol + inhalant a "multimodal analgesic protocol" — propofol is induction not analgesia (C13)
+- Not describing antiarrhythmic drug in the designated case log (C19)
+- No mention of temperature probe or temp assessment (C31)
+- No Bair Hugger or active warming device mentioned (C32) — use generic term "forced warm air blanket"
+- Syringe pump not described in assigned log (C45)
+- Dental block: only mentioning drug without technique, landmarks, or how block was performed (C68)
+- Pain scoring system not mentioned or described (C70)
+- NMBA given but not labeled which drug was the neuromuscular blocking agent (S5)
+- TIVA described without reasoning for drug choices (S10)
+- Airway exchange catheter used but placement not described (S17)
+- IV opioid induction not described in designated case log (S20)
+
+ASA PLACEMENT ERRORS:
+- Case Logs 52, 57, and 59 were ASA II appearing AFTER case log position 12 and were NOT marked as "SKILLS ONLY" — this caused rejection
+- THE RULE: ASA I and II cases must appear within the first 12 case logs. Any ASA I or II case appearing at position 13 or later MUST be explicitly marked "SKILLS ONLY" or it will be rejected and will not count toward the passing total
+- When auditing, check the position of every ASA I/II case and whether it carries the SKILLS ONLY designation if beyond position 12
+- Brief or scant ASA I/II case logs (like 57 and 59) are also flagged even when marked correctly — they still need complete information
+
+TERMINOLOGY AND PROFESSIONALISM:
+- "Soft palate resection" instead of staphylectomy — use proper medical terminology throughout
+- "BP tanked" or "BP in the 50's" — informal language, never acceptable
+- Multiple spelling and typographic errors were noted — proofread every entry
+- Uneven skill distribution — some logs had 3+ skills, others had none — distribute skills evenly across logs
+- Blank space in stable anesthetic cases should be used to document basic skills (machine components, fluid pumps, syringe pumps, capnography, ECG, etc.)
+
+TIMING ERROR:
+- Case Log 58 dated 11/26/04 — outside the application year, automatically rejected
 
 RECOMMENDATIONS BASED ON AVTAA GUIDANCE:
 - Aim for 60 cases, not 50 — provides buffer if any are rejected
@@ -736,7 +1066,7 @@ function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedatio
         <div style={S.statCard(lowASA<=12&&lowASA>0?"green":lowASA>12?"red":"violet")}>
           <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>ASA I/II COUNT</div>
           <div style={{fontSize:30,fontWeight:900,color:lowASA<=12&&lowASA>0?T.green:lowASA>12?T.red:T.muted}}>{lowASA||"—"}</div>
-          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Max 12 — must be on first 4 pages ONLY</div>
+          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Max 12 — must be within first 12 logs</div>
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
             {["I","II","III","IV","V","E"].map(a=>(
               <div key={a} style={{textAlign:"center"}}>
@@ -765,7 +1095,7 @@ function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedatio
             📍 Location dropdown on every case<br/>
             🔬 Skills described in context — not listed<br/>
             🚫 No names or facility info (Folder 2)<br/>
-            ⚠️ ASA I/II max 12, pages 1-4 only<br/>
+            ⚠️ ASA I/II max 12, within first 12 logs<br/>
             💉 Max 3 sedation-only cases<br/>
             ✍️ Define all abbreviations (dex, bup, ace)
           </div>
@@ -975,6 +1305,30 @@ Score 3-4: Some brand names or mL-only doses. Several abbreviations undefined. M
 Score 5-6: Mostly generic drug names. Doses in mg/kg. Most abbreviations defined on first use. Professional tone throughout. Readable and organized.
 Score 7-8: All generic drug names used (permitted brand exceptions only: Telazol, Simbadol, Nocita, Zoletil, Vetstarch, Zorbium, Zenalpha). All doses in mg or mcg/kg. All abbreviations defined on first use with no exceptions. No quoted references from textbooks or journals. Written as an explanation to another veterinary professional — not as a narrative to a layperson. Excellent grammar and spelling throughout.
 Score 9-10: All of 7-8 with exceptional clinical depth. The reasoning behind every decision is explicitly stated. Advanced pharmacological and physiological terminology used correctly and naturally. The document reads as if written by a technician with genuine mastery of veterinary anesthesia. Would impress even a DACVAA reviewer.
+
+
+KNOWN REJECTION PATTERNS FROM THIS APPLICANT'S PREVIOUS CASE REPORTS (Dimari Diaz #2574):
+These are the EXACT case report failures from her rejected application. Check every report for these:
+
+REPORT LENGTH AND DEPTH:
+- Report 2 was less than 4 pages — reports should fill close to the 5-page maximum to demonstrate adequate depth
+- Reports did not demonstrate advanced anesthesia management — must show clinical decision-making not just factual recounting
+- Patient history presented as factual information with no assessment — must explain HOW each finding affects the anesthetic plan
+
+ASA CONSISTENCY (caused direct rejection):
+- ASA status in case report (IV) did not match case log (III) and anesthetic sheet (III)
+- All three documents must show identical ASA status — verify before submitting every report
+
+ANESTHESIA CARE SECTION ERRORS:
+- Patient presentation details were repeated in Anesthesia Care and Patient Support section instead of clinical reasoning
+- This section must contain active management decisions, interventions with values, and reasoning — not a repeat of the history
+- Little to no discussion of disease process and physiology — must explain how each disease alters the anesthetic approach
+- No demonstration that the applicant personally assessed and made decisions — write in first person active voice
+
+OVERALL QUALITY ISSUES:
+- Reports lacked specific vital sign values and intervention details
+- Missing physiological discussion of how patient diseases affected drug choices
+- No evidence of advanced anesthesia management or independent clinical reasoning
 
 RESPOND WITH EXACTLY THESE LABELED LINES — nothing before, nothing after, no extra commentary:
 SCORE_S1: [integer 1-10]
@@ -1912,7 +2266,7 @@ The app is a multi-tab React dashboard with the following tabs:
 - Skills Map (core/supplemental skill checklist with case log # tracking)
 - CE Auditor (paste CE list, flags presenter credential issues)
 
-It uses the Anthropic Claude API for AI features, mammoth for .docx parsing, JSZip for XML format checking, and the window.storage API for auto-save.
+It uses the Anthropic Claude API for AI features, mammoth for .docx parsing, JSZip for XML format checking, and Supabase for cloud auto-save.
 
 Please add the requested feature to the existing code and return the full updated .jsx file.`;
 
@@ -2007,7 +2361,7 @@ Please add the requested feature to the existing code and return the full update
 // Password is hashed so it's not visible in plain text in the source.
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 // Simple session auth — password gates entry, persists for the tab session.
-// window.storage and localStorage are both restricted in this sandbox,
+// localStorage is restricted in the sandbox, auth uses module-level state,
 // so we use a module-level variable that survives React re-renders.
 let _sessionAuthed = false;
 
@@ -2336,10 +2690,11 @@ export default function App() {
     setSavedIndicator(true);
   },[checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderSections]);
 
-  // load on mount
+  // load on mount — pulls from Supabase cloud
   useEffect(()=>{
+    setSavedIndicator(false);
     storageLoad().then(d=>{
-      if(!d)return;
+      if(!d){ setSavedIndicator(true); return; }
       if(d.checked)setChecked(d.checked);
       if(d.caseLogCount)setCaseLogCount(d.caseLogCount);
       if(d.asaCounts)setAsaCounts(d.asaCounts);
@@ -2357,13 +2712,69 @@ export default function App() {
           return merged;
         });
       }
+      setSavedIndicator(true);
     });
   },[]);
 
   // save on change
   useEffect(()=>{const t=setTimeout(saveData,1200);return()=>clearTimeout(t);},[saveData]);
 
-  const setCheckedWrapped=v=>{setChecked(typeof v==="function"?v:v);};
+  // ── Export progress as JSON file ──────────────────────────────────────────
+  const exportProgress = () => {
+    const builderToSave = Object.fromEntries(
+      Object.entries(builderSections).map(([k,v])=>[k,{notes:v.notes,polished:v.polished}])
+    );
+    const data = {
+      checked, caseLogCount, asaCounts, sedationOnly,
+      reportScores, ceHours, coreSkillsPct, suppSkillsPct,
+      builderToSave, savedAt: Date.now(), version: "vtsc_v1",
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `vts-compass-progress-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  // ── Import progress from JSON file ────────────────────────────────────────
+  const importProgress = () => {
+    const input = document.createElement("input");
+    input.type  = "file";
+    input.accept = ".json";
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const d = JSON.parse(ev.target.result);
+          if (d.version !== "vtsc_v1") { alert("This file doesn't look like a VTS Compass progress file."); return; }
+          if (d.checked)              setChecked(d.checked);
+          if (d.caseLogCount)         setCaseLogCount(d.caseLogCount);
+          if (d.asaCounts)            setAsaCounts(d.asaCounts);
+          if (d.sedationOnly != null) setSedationOnly(d.sedationOnly);
+          if (d.reportScores)         setReportScores(d.reportScores);
+          if (d.ceHours)              setCeHours(d.ceHours);
+          if (d.coreSkillsPct != null) setCoreSkillsPct(d.coreSkillsPct);
+          if (d.suppSkillsPct != null) setSuppSkillsPct(d.suppSkillsPct);
+          if (d.builderToSave) {
+            setBuilderSections(prev => {
+              const merged = {...prev};
+              Object.entries(d.builderToSave).forEach(([k,v]) => {
+                if (merged[k]) merged[k] = {...merged[k], notes:v.notes||"", polished:v.polished||""};
+              });
+              return merged;
+            });
+          }
+          alert("✓ Progress loaded successfully!");
+        } catch(_) { alert("Could not read this file. Make sure it's a VTS Compass progress file."); }
+      };
+      reader.readAsText(file);
+    };
+    document.body.appendChild(input); input.click(); document.body.removeChild(input);
+  };
 
   return (
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'DM Sans','Helvetica Neue',sans-serif",color:T.text}}>
@@ -2433,7 +2844,13 @@ export default function App() {
             <div style={{fontSize:11,color:T.muted,marginTop:3}}>Powered by Claude</div>
           </div>
         </div>
-        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={importProgress} style={{...S.btn("ghost"),fontSize:12,padding:"7px 14px",border:`1px solid ${T.teal}55`,color:T.teal}} title="Load previously saved progress from a .json file">
+            ⬆️ Load Progress
+          </button>
+          <button onClick={exportProgress} style={{...S.btn("ghost"),fontSize:12,padding:"7px 14px",border:`1px solid ${T.green}55`,color:T.green}} title="Download all your progress as a .json file you can reload later">
+            ⬇️ Save Progress
+          </button>
           <button onClick={()=>setShowFeatureModal(true)} style={{...S.btn("ghost"),fontSize:12,padding:"7px 14px",border:`1px solid ${T.violet}55`,color:T.violetMid}}>✨ Request a Feature</button>
           <div style={{background:T.amberSoft,border:`1px solid ${T.amber}55`,borderRadius:8,padding:"7px 14px",fontSize:12,color:T.amber,fontWeight:700}}>⏰ DEC 31 DEADLINE</div>
         </div>
