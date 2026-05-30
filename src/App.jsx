@@ -62,8 +62,7 @@ async function storageLoad() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-const _k = ["sk-ant-api03-","W10cwCifOulYNP5HCqoQTHOVQOAkyNW4Eu746IBc8CQROwoz0k5","-DOly2uMnBKAvQiB1RsuhS4bSshZBen2-Fw-bmwrtgAA"].join("");
-const ANTHROPIC_KEY = _k;
+const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
 
 async function callClaude(system, user, maxTokens=1400) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
