@@ -62,26 +62,35 @@ async function storageLoad() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-const ANTHROPIC_KEY = ["sk-ant-api03-","2kwDLA7db-_NfmgkbhL6HaTG7nzra4JcojlAcC1Oe62nCHNdDLakHlRx1bwoWtoLBVi6","g1OqN2C85EbqOf12Dg-6PUJ_AAA"].join("");
 
 async function callClaude(system, user, maxTokens=1400) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    const ANTHROPIC_KEY = ["sk-ant-api03-","2kwDLA7db-_NfmgkbhL6HaTG7nzra4JcojlAcC1Oe62nCHNdDLakHlRx1bwoWtoLBVi6","g1OqN2C85EbqOf12Dg-6PUJ_AAA"].join("");
+
+    const url = isLocal
+      ? "https://api.anthropic.com/v1/messages"
+      : "/api/claude";
+
+    const headers = { "Content-Type": "application/json" };
+    if (isLocal) {
+      headers["x-api-key"] = ANTHROPIC_KEY;
+      headers["anthropic-version"] = "2023-06-01";
+      headers["anthropic-dangerous-direct-browser-access"] = "true";
+    }
+
+    const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-      },
+      headers,
       body: JSON.stringify({ model:"claude-haiku-4-5-20251001", max_tokens:maxTokens, system, messages:[{role:"user",content:user}] })
     });
+
     const d = await res.json();
-    if (d.error) throw new Error(`API error: ${d.error.message} (type: ${d.error.type})`);
-    if (!d.content) throw new Error(`Unexpected response: ${JSON.stringify(d).slice(0,200)}`);
-    return d.content.map(b=>b.text||"").join("") || "No response content";
+    if (d.error) throw new Error(`API error: ${d.error.message}`);
+    if (!d.content) throw new Error(`Unexpected: ${JSON.stringify(d).slice(0,200)}`);
+    return d.content.map(b=>b.text||"").join("") || "No response";
   } catch(err) {
-    if (err.message.includes("fetch")) throw new Error("Network error — check internet connection and try again");
+    if (err.name === "TypeError") throw new Error("Network error — check connection");
     throw err;
   }
 }
