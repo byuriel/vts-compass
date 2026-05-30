@@ -665,7 +665,7 @@ function RejectionTab() {
                 const isImage = state.file.type.startsWith("image/");
                 const mediaType = isImage ? state.file.type : "application/pdf";
                 const base64 = e.target.result.split(",")[1];
-                const res = await fetch("https://api.anthropic.com/v1/messages", {
+                const res = await fetch("/api/claude", {
                   method:"POST", headers:{"Content-Type":"application/json"},
                   body: JSON.stringify({
                     model:"claude-sonnet-4-20250514", max_tokens:2000,
@@ -1179,7 +1179,7 @@ ${caseLogRecords.map((r,i) => `
           reader.onload = async (e) => {
             try {
               const base64 = e.target.result.split(",")[1];
-              const res = await fetch("https://api.anthropic.com/v1/messages", {
+              const res = await fetch("/api/claude", {
                 method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify({
                   model:"claude-sonnet-4-20250514", max_tokens:1400,
@@ -1839,7 +1839,7 @@ function CaseReportTab({reportScores, setReportScores, setReportUploadCount}) {
           reader.onload = async (e) => {
             try {
               const base64 = e.target.result.split(",")[1];
-              const res = await fetch("https://api.anthropic.com/v1/messages", {
+              const res = await fetch("/api/claude", {
                 method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify({
                   model:"claude-sonnet-4-20250514", max_tokens:1200,
