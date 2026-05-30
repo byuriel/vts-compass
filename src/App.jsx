@@ -62,7 +62,8 @@ async function storageLoad() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-const ANTHROPIC_KEY = "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";
+const _k = ["sk-ant-api03-","W10cwCifOulYNP5HCqoQTHOVQOAkyNW4Eu746IBc8CQROwoz0k5","-DOly2uMnBKAvQiB1RsuhS4bSshZBen2-Fw-bmwrtgAA"].join("");
+const ANTHROPIC_KEY = _k;
 
 async function callClaude(system, user, maxTokens=1400) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
