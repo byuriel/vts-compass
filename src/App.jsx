@@ -62,12 +62,21 @@ async function storageLoad() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
+const ANTHROPIC_KEY = "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";
+
 async function callClaude(system, user, maxTokens=1400) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:maxTokens, system, messages:[{role:"user",content:user}] })
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:maxTokens, system, messages:[{role:"user",content:user}] })
   });
   const d = await res.json();
+  if (d.error) throw new Error(d.error.message || "API error");
   return d.content?.map(b=>b.text||"").join("") || "Error: no response";
 }
 
@@ -448,16 +457,24 @@ function ChecklistTab({checked,setChecked}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB 2 — READINESS SCORE
 // ═══════════════════════════════════════════════════════════════════════════════
-function ReadinessTab({checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct}) {
+function ReadinessTab({checked,caseLogCount,caseLogRecords,asaCounts,sedationOnly,reportScores,reportUploadCount,ceHours,coreSkillsPct,suppSkillsPct}) {
   const lowASA=(asaCounts.I||0)+(asaCounts.II||0);
   const allIds=Object.values(CHECKLIST_ITEMS).flat().map(i=>i.id);
   const checklistPct=Math.round(Object.values(checked).filter(Boolean).length/allIds.length*100);
-  const logScore=caseLogCount>=60?100:caseLogCount>=50?80:caseLogCount>0?40:0;
+  // Use caseLogRecords.length as source of truth if records exist, else fall back to manual count
+  const effectiveLogCount = caseLogRecords.length > 0 ? caseLogRecords.length : caseLogCount;
+  // Linear: each case = 1.67 points. 50 = 83%, 60 = 100%. No jump from 1 log = 40%
+  const logScore = Math.min(100, Math.round(effectiveLogCount / 60 * 100));
   const asaScore=lowASA>0&&lowASA<=12?100:lowASA===0?60:0;
   const sedScore=sedationOnly<=3?100:0;
-  const avgReport = reportScores.filter(Boolean).length > 0
-    ? Math.round(reportScores.filter(s=>s!==null).reduce((a,b)=>a+b,0) / reportScores.filter(s=>s!==null).length)
+  // Case reports: blend upload progress (25% each) + scored quality
+  // 4 uploaded = 40% base, then scored reports push toward 100%
+  const scoredReports = reportScores.filter(s=>s!==null);
+  const uploadPct = Math.round((reportUploadCount / 4) * 40); // max 40 pts for uploading
+  const scorePct = scoredReports.length > 0
+    ? Math.round(scoredReports.reduce((a,b)=>a+b,0) / scoredReports.length * 0.60) // max 60 pts for score quality
     : 0;
+  const avgReport = Math.min(100, uploadPct + scorePct);
   const ceScore=ceHours>=40?100:ceHours>0?Math.round(ceHours/40*100):0;
   const coreScore=coreSkillsPct>=90?100:Math.round(coreSkillsPct/90*100);
   const suppScore=suppSkillsPct>=50?100:Math.round(suppSkillsPct/50*100);
@@ -465,11 +482,12 @@ function ReadinessTab({checked,caseLogCount,asaCounts,sedationOnly,reportScores,
   const readinessColor=overall>=80?"green":overall>=60?"amber":"red";
   const readinessLabel=overall>=80?"Ready to Submit":overall>=60?"Almost Ready":"Needs More Work";
   const todos=[];
-  if(caseLogCount<50)todos.push({priority:"🔴 Critical",text:`Add ${50-caseLogCount} more case logs (need minimum 50, recommend 60)`});
+  if(effectiveLogCount<50)todos.push({priority:"🔴 Critical",text:`Add ${50-effectiveLogCount} more case logs (need minimum 50, recommend 60)`});
   if(lowASA>12)todos.push({priority:"🔴 Critical",text:`Remove ${lowASA-12} ASA I/II cases — only 12 allowed`});
   if(sedationOnly>3)todos.push({priority:"🔴 Critical",text:`Reduce sedation-only cases to 3 maximum`});
-  if(avgReport<60&&reportScores.filter(Boolean).length>0)todos.push({priority:"🔴 Critical",text:`Improve case reports — current avg score ${avgReport}% (aim for 80%+)`});
-  if(avgReport===0)todos.push({priority:"🔴 Critical",text:`Upload and score all 4 case reports in the Case Reports tab`});
+  if(scoredReports.length>0&&scoredReports.reduce((a,b)=>a+b,0)/scoredReports.length<60)todos.push({priority:"🔴 Critical",text:`Improve case reports — avg score ${Math.round(scoredReports.reduce((a,b)=>a+b,0)/scoredReports.length)}% (aim for 80%+)`});
+  if(reportUploadCount<4)todos.push({priority:"🔴 Critical",text:`Upload ${4-reportUploadCount} more case report${4-reportUploadCount!==1?"s":""} in the Case Reports tab`});
+  if(reportUploadCount===4&&scoredReports.length<4)todos.push({priority:"🟡 Important",text:`Score ${4-scoredReports.length} remaining case report${4-scoredReports.length!==1?"s":""} — click Analyze & Score`});
   if(ceHours<40)todos.push({priority:"🟡 Important",text:`Add ${40-ceHours} more CE hours (need 40 minimum)`});
   if(coreSkillsPct<90)todos.push({priority:"🟡 Important",text:`Document ${Math.ceil(32*0.9)-Math.round(32*coreSkillsPct/100)} more core skills in case logs`});
   if(suppSkillsPct<50)todos.push({priority:"🟡 Important",text:`Document more supplemental skills — currently at ${suppSkillsPct}%`});
@@ -478,9 +496,9 @@ function ReadinessTab({checked,caseLogCount,asaCounts,sedationOnly,reportScores,
 
   const metrics=[
     {label:"Checklist",pct:checklistPct,color:"violet"},
-    {label:"Case Logs",pct:logScore,color:logScore===100?"green":logScore>=50?"amber":"red"},
+    {label:`Case Logs (${effectiveLogCount}/60)`,pct:logScore,color:logScore>=100?"green":logScore>=83?"amber":"red"},
     {label:"ASA Distribution",pct:asaScore,color:asaScore===100?"green":"red"},
-    {label:"Case Reports",pct:avgReport,color:avgReport>=80?"green":avgReport>=50?"amber":"red"},
+    {label:`Case Reports (${reportUploadCount}/4 uploaded, ${scoredReports.length}/4 scored)`,pct:avgReport,color:avgReport>=80?"green":avgReport>=40?"amber":"red"},
     {label:"CE Hours",pct:ceScore,color:ceScore===100?"green":ceScore>0?"amber":"red"},
     {label:"Core Skills",pct:coreScore,color:coreScore>=100?"green":coreScore>=70?"amber":"red"},
     {label:"Suppl. Skills",pct:suppScore,color:suppScore>=100?"green":suppScore>=70?"amber":"red"},
@@ -982,14 +1000,171 @@ WHAT IS DONE WELL:
 [genuine strengths to acknowledge]`;
 }
 
-function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedationOnly,setSedationOnly}) {
+function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedationOnly,setSedationOnly,caseLogRecords,setCaseLogRecords}) {
   const blank = () => ({ file:null, phase:"idle", step:"", text:"", result:"", errMsg:"" });
   const [state, setState] = useState(blank());
   const patch = (obj) => setState(prev => ({...prev, ...obj}));
 
-  const onFile = (f) => {
-    setState({...blank(), file:f, phase:"ready"});
+  const [analyzing, setAnalyzing]   = useState(false);
+  const [entryResult, setEntryResult] = useState("");
+
+  const analyzeEntry = async () => {
+    const content = [
+      entry.num    && `Case Log #: ${entry.num}`,
+      entry.date   && `Date: ${entry.date}`,
+      entry.species&& `Species/Breed: ${entry.species} / ${entry.breed}`,
+      entry.age    && `Age/Sex/Weight: ${entry.age} / ${entry.sex} / ${entry.weight}`,
+      `ASA Status: ${entry.asa}${entry.skillsOnly?" (SKILLS ONLY)":""}${entry.sedationOnly?" (SEDATION ONLY)":""}`,
+      entry.location&&`Location: ${entry.location}`,
+      entry.duration&&`Duration: ${entry.duration}`,
+      entry.diagnosis&&`Diagnosis: ${entry.diagnosis}`,
+      entry.drugs  && `Drugs & Doses:\n${entry.drugs}`,
+      entry.monitoring&&`Monitoring: ${entry.monitoring}`,
+      entry.summary&&`Case Summary:\n${entry.summary}`,
+      entry.skills &&`Skills Documented:\n${entry.skills}`,
+    ].filter(Boolean).join("\n\n");
+
+    if (!content.trim()) return;
+    setAnalyzing(true);
+    setEntryResult("");
+    try {
+      const result = await callClaude(
+        buildCaseLogSystem(),
+        `Analyze this SINGLE AVTAA case log entry for compliance issues. Be specific — flag every problem with drug doses, vital sign notation, skill descriptions, ASA placement, missing fields, terminology, and clinical reasoning. Also note what is done well:\n\n${content}`,
+        1400
+      );
+      setEntryResult(result);
+    } catch(err) {
+      setEntryResult("Analysis failed: " + err.message);
+    }
+    setAnalyzing(false);
   };
+
+  // ── Export all records as AVTAA-formatted PDF using reportlab via API ──────
+  const exportPDF = async () => {
+    if (caseLogRecords.length === 0) return;
+    try {
+      // Build plain text version of all cases for Claude to format
+      const allCases = caseLogRecords.map(r => [
+        `CASE LOG #${r.num}`,
+        `Date: ${r.date||""}  |  Location: ${r.location||""}  |  Duration: ${r.duration||""}`,
+        `Species/Breed: ${r.species||""} / ${r.breed||""}`,
+        `Age/Sex/Weight: ${r.age||""} / ${r.sex||""} / ${r.weight||""}`,
+        `ASA Physical Status: ${r.asa||""}${r.skillsOnly?" — SKILLS ONLY":""}${r.sedationOnly?" — SEDATION ONLY":""}`,
+        `Diagnosis/Reason for Anesthesia: ${r.diagnosis||""}`,
+        `\nDrugs Administered:\n${r.drugs||""}`,
+        `\nMonitoring Equipment:\n${r.monitoring||""}`,
+        `\nCase Summary:\n${r.summary||""}`,
+        `\nSkills Demonstrated:\n${r.skills||""}`,
+      ].join("\n")).join("\n\n" + "═".repeat(60) + "\n\n");
+
+      // Build HTML blob that renders nicely and can be printed to PDF
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>AVTAA Case Logs — Applicant XXXX</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Times New Roman',Times,serif; font-size:10.5pt; line-height:1.5; color:#1a1a1a; background:#fff; }
+  .cover { text-align:center; padding:80px 40px; border-bottom:2px solid #2D1F5E; margin-bottom:40px; }
+  .cover h1 { font-size:20pt; font-weight:bold; color:#2D1F5E; margin-bottom:10px; }
+  .cover p { font-size:11pt; color:#555; margin-top:8px; }
+  .case { page-break-before:always; padding:36px 48px; }
+  .case:first-of-type { page-break-before:avoid; }
+  .case-header { background:#2D1F5E; color:#fff; padding:10px 16px; border-radius:4px; margin-bottom:16px; }
+  .case-header h2 { font-size:13pt; font-weight:bold; }
+  .case-header p { font-size:9.5pt; margin-top:3px; opacity:0.85; }
+  .meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 24px; margin-bottom:14px; font-size:10pt; }
+  .meta-item { display:flex; gap:6px; }
+  .meta-label { font-weight:bold; color:#2D1F5E; min-width:120px; flex-shrink:0; }
+  .asa-badge { display:inline-block; padding:3px 12px; border-radius:12px; font-weight:bold; font-size:9pt;
+    background:${`#2D1F5E`}; color:white; margin-bottom:12px; }
+  .section { margin-bottom:14px; }
+  .section-title { font-weight:bold; font-size:10pt; color:#2D1F5E; border-bottom:1px solid #C4B5FD; padding-bottom:3px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+  .section-body { font-size:10.5pt; line-height:1.6; white-space:pre-wrap; }
+  .tag { display:inline-block; padding:2px 10px; border-radius:10px; font-size:9pt; font-weight:bold; margin-left:8px; }
+  .tag-skills { background:#EDE9FE; color:#7C3AED; }
+  .tag-sed { background:#FEF3C7; color:#92400E; }
+  .footer { text-align:center; font-size:9pt; color:#888; padding:20px; border-top:1px solid #ddd; margin-top:40px; }
+  @media print {
+    body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .case { page-break-before:always; }
+    .case:first-of-type { page-break-before:avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="cover">
+  <h1>AVTAA VTS Case Logs</h1>
+  <p>Applicant Number: XXXX &nbsp;|&nbsp; Small Animal Track</p>
+  <p>Application Year: 2024 &nbsp;|&nbsp; Total Cases: ${caseLogRecords.length}</p>
+  <p style="margin-top:16px;font-size:9.5pt;color:#888;">Generated by VTS Compass &nbsp;·&nbsp; Review all entries before submission</p>
+</div>
+${caseLogRecords.map((r,i) => `
+<div class="case">
+  <div class="case-header">
+    <h2>Case Log #${r.num}${r.skillsOnly?' <span style="font-size:10pt;opacity:0.85;">[SKILLS ONLY]</span>':''}${r.sedationOnly?' <span style="font-size:10pt;opacity:0.85;">[SEDATION ONLY]</span>':''}</h2>
+    <p>${r.date||''} &nbsp;·&nbsp; ${r.location||''} &nbsp;·&nbsp; ${r.duration||''}</p>
+  </div>
+  <div class="meta-grid">
+    <div class="meta-item"><span class="meta-label">Species/Breed:</span><span>${r.species||'—'} / ${r.breed||'—'}</span></div>
+    <div class="meta-item"><span class="meta-label">Age/Sex/Weight:</span><span>${r.age||'—'} / ${r.sex||'—'} / ${r.weight||'—'}</span></div>
+    <div class="meta-item"><span class="meta-label">ASA Status:</span><span style="font-weight:bold;color:#2D1F5E;">ASA ${r.asa||'—'}</span></div>
+    <div class="meta-item"><span class="meta-label">Diagnosis:</span><span>${r.diagnosis||'—'}</span></div>
+  </div>
+  ${r.drugs?`<div class="section"><div class="section-title">Drugs Administered</div><div class="section-body">${r.drugs}</div></div>`:''}
+  ${r.monitoring?`<div class="section"><div class="section-title">Monitoring Equipment</div><div class="section-body">${r.monitoring}</div></div>`:''}
+  ${r.summary?`<div class="section"><div class="section-title">Case Summary</div><div class="section-body">${r.summary}</div></div>`:''}
+  ${r.skills?`<div class="section"><div class="section-title">Skills Demonstrated</div><div class="section-body">${r.skills}</div></div>`:''}
+</div>`).join('')}
+<div class="footer">VTS Compass &nbsp;·&nbsp; ${caseLogRecords.length} case logs &nbsp;·&nbsp; Review all entries before AVTAA submission</div>
+</body>
+</html>`;
+
+      const blob = new Blob([html], {type:"text/html"});
+      const url  = URL.createObjectURL(blob);
+      const w    = window.open(url, "_blank");
+      if (w) {
+        w.onload = () => {
+          setTimeout(() => { w.print(); }, 500);
+        };
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch(err) {
+      alert("Export failed: " + err.message);
+    }
+  };
+
+  const blankEntry = () => ({
+    num:"", date:"", species:"", breed:"", age:"", sex:"", weight:"",
+    asa:"III", location:"Location 1", duration:"", diagnosis:"",
+    drugs:"", monitoring:"", summary:"", skills:"",
+    sedationOnly:false, skillsOnly:false,
+  });
+  const [showRecords,  setShowRecords]  = useState(false);
+  const [addingCase,   setAddingCase]   = useState(false);
+  const [selectedCase, setSelectedCase] = useState(null);
+  const [entry,        setEntry]        = useState(blankEntry());
+  const setField = (k,v) => setEntry(p=>({...p,[k]:v}));
+
+  const saveEntry = () => {
+    if (!entry.num.trim()) return;
+    const updated = caseLogRecords
+      .filter(r=>r.num!==entry.num)
+      .concat(entry)
+      .sort((a,b)=>parseInt(a.num)-parseInt(b.num));
+    setCaseLogRecords(updated);
+    setEntry(blankEntry()); setAddingCase(false); setSelectedCase(entry.num);
+  };
+
+  const deleteCase = (num) => {
+    setCaseLogRecords(prev=>prev.filter(r=>r.num!==num));
+    if(selectedCase===num) setSelectedCase(null);
+  };
+
+  const editCase = (rec) => { setEntry({...rec}); setAddingCase(true); setShowRecords(true); };
+  const onFile   = (f)   => setState({...blank(), file:f, phase:"ready"});
 
   const run = async () => {
     if (!state.file) return;
@@ -1022,61 +1197,55 @@ function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedatio
       } else {
         text = await state.file.text();
       }
-
       if (!text.trim()) throw new Error("No text could be extracted from this file.");
-
-      // Auto-detect case counts from text
       const caseMatches = text.match(/\bcase\s*(?:log\s*)?#?\s*\d+/gi) || [];
       if (caseMatches.length > 0) setCaseLogCount(caseMatches.length);
-
       patch({step:"Running comprehensive AVTAA compliance audit...", text});
-
       const result = await callClaude(
         buildCaseLogSystem(),
         `Perform a full AVTAA case log audit on this submission. Be thorough — check every entry:\n\n${text.slice(0, 12000)}`,
         1800
       );
-
       patch({phase:"done", step:"", result, text});
-
     } catch(err) {
       patch({phase:"error", step:"", errMsg: err.message});
     }
   };
 
   const lowASA = (asaCounts.I||0) + (asaCounts.II||0);
+  const selectedRec = caseLogRecords.find(r=>r.num===selectedCase);
+  const ASA_COLORS  = {I:T.green,II:T.green,III:T.amber,IV:T.red,V:T.red,E:T.red,IVE:T.red,VE:T.red,IIIE:T.amber};
 
   return (
     <div>
       <div style={S.sectionTitle}>Case Log Auditor</div>
-      <div style={S.sectionSub}>Upload your AVTAA case log PDF. Claude runs a comprehensive compliance audit against the official 2025 AVTAA requirements — checking every entry for violations, missing fields, dose notation, skill documentation, and ASA distribution.</div>
+      <div style={S.sectionSub}>Upload your AVTAA case log PDF for a full compliance audit. Use the Case Log Records section to manually add and review each individual case.</div>
 
-      {/* Stats row */}
+      {/* Stats */}
       <div style={S.grid2}>
         <div style={S.statCard(caseLogCount>=60?"green":caseLogCount>=50?"amber":caseLogCount>0?"red":"violet")}>
           <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>TOTAL CASE LOGS</div>
           <div style={{fontSize:30,fontWeight:900,color:caseLogCount>=60?T.green:caseLogCount>=50?T.amber:caseLogCount>0?T.red:T.muted}}>{caseLogCount||"—"}</div>
-          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Need 50–60 (strongly recommend 60)</div>
-          <div style={{display:"flex",gap:6}}>
+          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Need 50–60 · {caseLogRecords.length>0?"auto-tracked from records below":"use +/− or add cases below"}</div>
+          {caseLogRecords.length===0&&<div style={{display:"flex",gap:6}}>
             <button style={{...S.btn("ghost"),padding:"4px 12px"}} onClick={()=>setCaseLogCount(Math.max(0,caseLogCount-1))}>−</button>
             <button style={{...S.btn("ghost"),padding:"4px 12px"}} onClick={()=>setCaseLogCount(caseLogCount+1)}>+</button>
-          </div>
+          </div>}
         </div>
-
         <div style={S.statCard(lowASA<=12&&lowASA>0?"green":lowASA>12?"red":"violet")}>
           <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>ASA I/II COUNT</div>
           <div style={{fontSize:30,fontWeight:900,color:lowASA<=12&&lowASA>0?T.green:lowASA>12?T.red:T.muted}}>{lowASA||"—"}</div>
-          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Max 12 — must be within first 12 logs</div>
+          <div style={{fontSize:11,color:T.muted,marginBottom:6}}>Max 12 — within first 12 logs</div>
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
             {["I","II","III","IV","V","E"].map(a=>(
               <div key={a} style={{textAlign:"center"}}>
                 <div style={{fontSize:9,color:T.muted,marginBottom:2}}>ASA{a}</div>
-                <input type="number" min={0} style={{...S.input,width:34,padding:"3px",textAlign:"center",fontSize:11}} value={asaCounts[a]||0} onChange={e=>setAsaCounts(p=>({...p,[a]:parseInt(e.target.value)||0}))}/>
+                <input type="number" min={0} style={{...S.input,width:34,padding:"3px",textAlign:"center",fontSize:11}}
+                  value={asaCounts[a]||0} onChange={e=>setAsaCounts(p=>({...p,[a]:parseInt(e.target.value)||0}))}/>
               </div>
             ))}
           </div>
         </div>
-
         <div style={S.statCard(sedationOnly<=3?"green":"red")}>
           <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4}}>SEDATION-ONLY CASES</div>
           <div style={{fontSize:30,fontWeight:900,color:sedationOnly<=3?T.green:T.red}}>{sedationOnly}</div>
@@ -1086,67 +1255,250 @@ function CaseLogTab({caseLogCount,setCaseLogCount,asaCounts,setAsaCounts,sedatio
             <button style={{...S.btn("ghost"),padding:"4px 14px",fontSize:15}} onClick={()=>setSedationOnly(sedationOnly+1)}>+</button>
           </div>
         </div>
-
         <div style={S.statCard("violet")}>
           <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:8}}>OFFICIAL REQUIREMENTS</div>
           <div style={{fontSize:11,color:T.sub,lineHeight:1.85}}>
-            📋 50-60 cases, Jan 1–Dec 31<br/>
-            💊 All doses in mg/kg or mcg/kg<br/>
-            📍 Location dropdown on every case<br/>
-            🔬 Skills described in context — not listed<br/>
-            🚫 No names or facility info (Folder 2)<br/>
-            ⚠️ ASA I/II max 12, within first 12 logs<br/>
-            💉 Max 3 sedation-only cases<br/>
-            ✍️ Define all abbreviations (dex, bup, ace)
+            {"📋 50-60 cases, Jan 1–Dec 31"}<br/>
+            {"💊 All doses in mg/kg or mcg/kg"}<br/>
+            {"📍 Location dropdown on every case"}<br/>
+            {"🔬 Skills described in context — not listed"}<br/>
+            {"🚫 No names or facility info (Folder 2)"}<br/>
+            {"⚠️ ASA I/II max 12, within first 12 logs"}<br/>
+            {"💉 Max 3 sedation-only cases"}<br/>
+            {"✍️ Define all abbreviations (dex, bup, ace)"}
           </div>
         </div>
       </div>
 
-      {/* Upload card */}
+      {/* ── CASE LOG RECORDS ─────────────────────────────────────────────── */}
       <div style={S.card}>
-        <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Upload Case Log PDF</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:15}}>📋 Case Log Records</div>
+            <div style={{fontSize:12,color:T.muted,marginTop:2}}>
+              {caseLogRecords.length > 0
+                ? `${caseLogRecords.length} case${caseLogRecords.length!==1?"s":""} recorded — select from dropdown to review`
+                : "Manually track each individual case log entry"}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {caseLogRecords.length > 0 && (
+              <>
+                <button style={{...S.btn("ghost"),fontSize:12,padding:"7px 14px"}}
+                  onClick={()=>{setShowRecords(s=>!s); setAddingCase(false);}}>
+                  {showRecords?"▲ Hide List":"▼ View All"}
+                </button>
+                <button style={{...S.btn("teal"),fontSize:12,padding:"7px 14px"}}
+                  onClick={exportPDF} title="Opens a print-ready HTML page — use Print → Save as PDF">
+                  📄 Export PDF
+                </button>
+              </>
+            )}
+            <button style={{...S.btn("primary"),fontSize:12,padding:"7px 14px"}}
+              onClick={()=>{setAddingCase(true); setShowRecords(true); setEntry(blankEntry()); setEntryResult("");}}>
+              + Add Case
+            </button>
+          </div>
+        </div>
+
+        {/* Dropdown */}
+        {caseLogRecords.length > 0 && (
+          <div style={{marginBottom:14}}>
+            <select style={{...S.input,width:"100%",cursor:"pointer"}}
+              value={selectedCase||""}
+              onChange={e=>{setSelectedCase(e.target.value||null); setAddingCase(false);}}>
+              <option value="">— Select a case to review —</option>
+              {caseLogRecords.map(r=>(
+                <option key={r.num} value={r.num}>
+                  {"#"+r.num+" · "+(r.date||"no date")+" · "+(r.species||"?")+"/"+(r.breed||"?")+" · ASA "+r.asa+(r.skillsOnly?" [SKILLS ONLY]":"")+(r.sedationOnly?" [SED ONLY]":"")+" · "+((r.diagnosis||"").slice(0,45)||"no diagnosis")}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* Selected case detail */}
+        {selectedRec && !addingCase && (
+          <div style={{background:"#0e0c18",border:`1px solid ${T.border}`,borderRadius:12,padding:20,marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontSize:17,fontWeight:900,color:T.text}}>Case Log #{selectedRec.num}</div>
+                <div style={{fontSize:12,color:T.muted,marginTop:2}}>{selectedRec.date} · {selectedRec.duration} · {selectedRec.location}</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{padding:"4px 12px",borderRadius:20,background:(ASA_COLORS[selectedRec.asa]||T.amber)+"22",border:`1px solid ${(ASA_COLORS[selectedRec.asa]||T.amber)}55`,fontSize:12,fontWeight:700,color:ASA_COLORS[selectedRec.asa]||T.amber}}>
+                  ASA {selectedRec.asa}{selectedRec.skillsOnly?" · SKILLS ONLY":""}
+                </span>
+                {selectedRec.sedationOnly && <span style={{padding:"4px 10px",borderRadius:20,background:T.amberSoft,border:`1px solid ${T.amber}55`,fontSize:11,color:T.amber,fontWeight:700}}>Sedation Only</span>}
+                <button style={{...S.btn("ghost"),fontSize:11,padding:"5px 10px"}} onClick={()=>editCase(selectedRec)}>✏️ Edit</button>
+                <button style={{...S.btn("ghost"),fontSize:11,padding:"5px 10px",color:T.red}} onClick={()=>deleteCase(selectedRec.num)}>🗑 Delete</button>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 24px",fontSize:12,marginBottom:14}}>
+              {[["Patient",`${selectedRec.species||"—"} / ${selectedRec.breed||"—"}`],
+                ["Age/Sex/Weight",`${selectedRec.age||"—"} / ${selectedRec.sex||"—"} / ${selectedRec.weight||"—"}`],
+                ["Diagnosis",selectedRec.diagnosis||"—"],
+              ].map(([l,v])=>(
+                <div key={l}><span style={{color:T.muted,fontWeight:700}}>{l}: </span><span style={{color:T.sub}}>{v}</span></div>
+              ))}
+            </div>
+            {[["DRUGS & DOSES","drugs"],["MONITORING","monitoring"],["CASE SUMMARY","summary"],["SKILLS","skills"]].map(([label,key])=>
+              selectedRec[key] ? (
+                <div key={key} style={{marginBottom:10}}>
+                  <div style={{fontSize:11,color:T.muted,fontWeight:700,marginBottom:4,letterSpacing:0.5}}>{label}</div>
+                  <div style={{fontSize:12,color:T.sub,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{selectedRec[key]}</div>
+                </div>
+              ) : null
+            )}
+          </div>
+        )}
+
+        {/* Compact list */}
+        {showRecords && !addingCase && caseLogRecords.length > 0 && (
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:T.muted,fontWeight:700,letterSpacing:0.5,marginBottom:8}}>ALL {caseLogRecords.length} RECORDED CASES</div>
+            <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:280,overflowY:"auto"}}>
+              {caseLogRecords.map(r=>(
+                <div key={r.num} onClick={()=>{setSelectedCase(r.num);setAddingCase(false);}}
+                  style={{display:"flex",alignItems:"center",gap:12,padding:"8px 14px",borderRadius:8,
+                    border:`1px solid ${selectedCase===r.num?T.violet:T.border}`,
+                    background:selectedCase===r.num?T.violetSoft:"transparent",
+                    cursor:"pointer",transition:"all 0.15s"}}>
+                  <div style={{fontWeight:800,fontSize:13,color:T.violetMid,minWidth:28}}>#{r.num}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,color:T.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {r.species}/{r.breed} · {(r.diagnosis||"no diagnosis").slice(0,55)}
+                    </div>
+                    <div style={{fontSize:11,color:T.muted}}>{r.date} · {r.duration} · ASA {r.asa}{r.skillsOnly?" · SKILLS ONLY":""}{r.sedationOnly?" · SED ONLY":""}</div>
+                  </div>
+                  <span style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,background:(ASA_COLORS[r.asa]||T.amber)+"22",color:ASA_COLORS[r.asa]||T.amber}}>ASA {r.asa}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Add / Edit form */}
+        {addingCase && (
+          <div style={{background:"#0e0c18",border:`1px solid ${T.violet}44`,borderRadius:12,padding:20,marginBottom:14}}>
+            <div style={{fontWeight:800,fontSize:14,color:T.text,marginBottom:16}}>
+              {entry.num && caseLogRecords.find(r=>r.num===entry.num) ? `✏️ Editing Case Log #${entry.num}` : "➕ New Case Log Entry"}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+              {[["Case Log #","num","e.g. 1"],["Date","date","MM/DD/YYYY"],["Duration","duration","e.g. 1hr 30min"],
+                ["Species","species","e.g. Canine"],["Breed","breed","e.g. Labrador"],["Age","age","e.g. 6yr"],
+                ["Sex","sex","MN / FS / MI / FI"],["Weight (with units)","weight","e.g. 32kg"],["Diagnosis","diagnosis","primary diagnosis"],
+              ].map(([label,key,ph])=>(
+                <div key={key}>
+                  <label style={{...S.label,marginBottom:4}}>{label}</label>
+                  <input style={S.input} placeholder={ph} value={entry[key]} onChange={e=>setField(key,e.target.value)}/>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label style={{...S.label,marginBottom:4}}>ASA Status</label>
+                <select style={S.input} value={entry.asa} onChange={e=>setField("asa",e.target.value)}>
+                  {["I","II","III","IV","V","IVE","VE","IIIE"].map(a=><option key={a} value={a}>ASA {a}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{...S.label,marginBottom:4}}>Location</label>
+                <select style={S.input} value={entry.location} onChange={e=>setField("location",e.target.value)}>
+                  {["Location 1","Location 2","Location 3","Secondary 1","Secondary 2"].map(l=><option key={l}>{l}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:12,justifyContent:"center",paddingTop:18}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.sub,cursor:"pointer"}}>
+                  <input type="checkbox" checked={entry.sedationOnly} onChange={e=>setField("sedationOnly",e.target.checked)}/>
+                  Sedation Only
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:T.sub,cursor:"pointer"}}>
+                  <input type="checkbox" checked={entry.skillsOnly} onChange={e=>setField("skillsOnly",e.target.checked)}/>
+                  Skills Only (ASA I/II past position 12)
+                </label>
+              </div>
+            </div>
+            {[["Monitoring","monitoring","ECG, SpO2, EtCO2, direct arterial BP, temp probe..."],
+              ["Drugs & Doses","drugs","Hydromorphone 0.1mg/kg IV, Propofol 2mg/kg IV, Isoflurane 1.5-2%..."],
+              ["Case Summary","summary","Describe anesthetic event with actual vital sign values (e.g. MAP 68mmHg), timestamps, interventions with doses, and patient responses..."],
+              ["Skills Documented","skills","Describe each skill in context — what you did, why, technique/landmarks, and patient response..."],
+            ].map(([label,key,ph])=>(
+              <div key={key} style={{marginBottom:12}}>
+                <label style={{...S.label,marginBottom:4}}>{label}</label>
+                <textarea style={{...S.textarea,minHeight:key==="summary"||key==="skills"?110:55}}
+                  placeholder={ph} value={entry[key]} onChange={e=>setField(key,e.target.value)}/>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <button style={{...S.btn("primary"),padding:"10px 24px"}} onClick={saveEntry} disabled={!entry.num.trim()}>
+                💾 Save Case Log
+              </button>
+              <button style={{...S.btn("teal"),padding:"10px 22px"}} onClick={analyzeEntry}
+                disabled={analyzing||(!entry.summary&&!entry.drugs&&!entry.skills)}>
+                {analyzing?<><span style={S.spinner}/>Analyzing...</>:"🔍 Analyze This Entry"}
+              </button>
+              <button style={{...S.btn("ghost"),padding:"10px 20px"}}
+                onClick={()=>{setAddingCase(false);setEntry(blankEntry());setEntryResult("");}}>
+                Cancel
+              </button>
+            </div>
+            {entryResult && (
+              <div style={{marginTop:16}}>
+                <div style={{fontSize:11,color:T.teal,fontWeight:700,marginBottom:8,letterSpacing:0.5}}>🔍 ENTRY ANALYSIS</div>
+                <AIResult result={entryResult}/>
+              </div>
+            )}
+          </div>
+        )}
+
+        {caseLogRecords.length===0 && !addingCase && (
+          <div style={{textAlign:"center",padding:"24px 0",color:T.muted,fontSize:13}}>
+            No case logs recorded yet. Click <strong style={{color:T.violetMid}}>+ Add Case</strong> to start tracking.
+          </div>
+        )}
+      </div>
+
+      {/* Upload audit card */}
+      <div style={S.card}>
+        <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>Upload Case Log PDF for Full AI Audit</div>
         <div style={{fontSize:12,color:T.muted,marginBottom:16}}>
-          Upload your [applicant#.caselog.pdf]. Claude will run a full compliance audit against all official 2025 AVTAA requirements — checking every case entry individually.
+          Upload your [applicant#.caselog.pdf] for a comprehensive compliance check against all 2025 AVTAA requirements.
         </div>
         <DropZone accept=".pdf,.txt" label="Drop your case log PDF here" sublabel="applicant#.caselog.pdf · Click or drag & drop" onFile={onFile} fileName={state.file?.name}/>
-
         {state.phase==="running" && (
           <div style={{marginTop:14,padding:"13px 16px",background:T.violetSoft,border:`1px solid ${T.violet}44`,borderRadius:10,display:"flex",alignItems:"center",gap:10}}>
             <span style={S.spinner}/><span style={{fontSize:13,color:T.violetMid,fontWeight:600}}>{state.step}</span>
           </div>
         )}
-
         {state.phase==="error" && (
           <div style={{marginTop:12,padding:"10px 14px",background:T.redSoft,border:`1px solid ${T.red}44`,borderRadius:8,fontSize:13,color:T.red}}>
             ❌ {state.errMsg}
             <button style={{...S.btn("ghost"),marginLeft:12,fontSize:12,padding:"4px 10px"}} onClick={()=>patch({phase:"ready",errMsg:""})}>Try Again</button>
           </div>
         )}
-
-        {(state.phase==="ready" || state.phase==="done") && (
+        {(state.phase==="ready"||state.phase==="done") && (
           <div style={{marginTop:14,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
             <button style={{...S.btn("primary"),padding:"11px 24px"}} onClick={run} disabled={state.phase==="running"}>
-              {state.phase==="done" ? "🔄 Re-Audit Case Log" : "🔍 Run Full Compliance Audit"}
+              {state.phase==="done"?"🔄 Re-Audit Case Log":"🔍 Run Full Compliance Audit"}
             </button>
-            {state.phase==="done" && state.text && (
+            {state.phase==="done"&&state.text&&(
               <span style={{fontSize:12,color:T.muted}}>{state.text.split(/\s+/).filter(Boolean).length.toLocaleString()} words extracted</span>
             )}
           </div>
         )}
-
-        {state.result && <AIResult result={state.result}/>}
+        {state.result&&<AIResult result={state.result}/>}
       </div>
 
-      {/* AVTAA recommendations panel */}
       <div style={{...S.card,background:"#0f1a0f",border:`1px solid ${T.green}33`}}>
-        <div style={{fontSize:13,color:T.green,fontWeight:700,marginBottom:12}}>📋 What AVTAA Recommends You Include (from official 2025 packet)</div>
+        <div style={{fontSize:13,color:T.green,fontWeight:700,marginBottom:12}}>📋 What AVTAA Recommends You Include</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px 24px",fontSize:12,color:T.sub,lineHeight:1.7}}>
           <div><strong style={{color:T.text}}>Case variety:</strong> Mix of species, ASA levels, and procedure types shows breadth</div>
-          <div><strong style={{color:T.text}}>Case complexity:</strong> Include cases with complications or challenging management — they score better than routine cases</div>
-          <div><strong style={{color:T.text}}>Advanced techniques:</strong> Include cases where you placed arterial lines, epidurals, nerve blocks, or ran CRIs — these map directly to skills list</div>
-          <div><strong style={{color:T.text}}>Skill context:</strong> For each skill, describe what you did, why you chose it, how you performed it, and what the patient response was</div>
-          <div><strong style={{color:T.text}}>Emergency cases:</strong> Include ASA E cases if available — they demonstrate your ability to handle high-risk patients</div>
-          <div><strong style={{color:T.text}}>Volume:</strong> Submit all 60 cases — if 2-3 are rejected during review, you still meet the minimum of 50</div>
+          <div><strong style={{color:T.text}}>Case complexity:</strong> Include cases with complications — they score better than routine cases</div>
+          <div><strong style={{color:T.text}}>Advanced techniques:</strong> Arterial lines, epidurals, nerve blocks, CRIs — map directly to skills list</div>
+          <div><strong style={{color:T.text}}>Skill context:</strong> What you did, why, how, and patient response — every time</div>
+          <div><strong style={{color:T.text}}>Emergency cases:</strong> ASA E cases demonstrate high-risk patient management ability</div>
+          <div><strong style={{color:T.text}}>Volume:</strong> Submit all 60 — buffer if any are rejected during review</div>
         </div>
       </div>
     </div>
@@ -1427,7 +1779,7 @@ function SectionBar({ label, score, weight, feedback }) {
   );
 }
 
-function CaseReportTab({reportScores, setReportScores}) {
+function CaseReportTab({reportScores, setReportScores, setReportUploadCount}) {
   // All state per report in one object — no stale closures from split updates
   const blank = (id) => ({
     id, label:`Case Report ${id}`,
@@ -1447,7 +1799,15 @@ function CaseReportTab({reportScores, setReportScores}) {
     setReports(prev => prev.map(r => r.id===id ? {...r,...obj} : r));
 
   // Step 1: file drop — just register it, show the button
-  const onFile = (id, file) => patch(id, {...blank(id), file, phase:"ready"});
+  const onFile = (id, file) => {
+    patch(id, {...blank(id), file, phase:"ready"});
+    // Update upload count in parent — count all reports that have a file
+    setReports(prev => {
+      const updated = prev.map(r => r.id===id ? {...blank(id), file, phase:"ready"} : r);
+      setReportUploadCount(updated.filter(r=>r.file||r.phase==="done").length);
+      return updated;
+    });
+  };
 
   // Step 2: single button — read file, check format, score content, show everything
   const run = async (id) => {
@@ -1520,11 +1880,15 @@ function CaseReportTab({reportScores, setReportScores}) {
       });
 
       patch(id, {phase:"done", step:"", parsed, text, formatResults});
+      // Recount uploads after scoring
+      setReports(prev => { setReportUploadCount(prev.filter(r=>r.file||r.phase==="done").length); return prev; });
 
     } catch(err) {
       patch(id, {phase:"error", step:"", errMsg: err.message || "Something went wrong"});
     }
   };
+
+  const [activeReport, setActiveReport] = useState(null); // null = show all, id = scroll to / highlight
 
   return (
     <div>
@@ -1532,6 +1896,42 @@ function CaseReportTab({reportScores, setReportScores}) {
       <div style={S.sectionSub}>
         Drop a file → hit <strong style={{color:T.violetMid}}>Analyze &amp; Score</strong>.
         One button runs the format check and AI scoring together and shows you both results when complete.
+      </div>
+
+      {/* Quick-access dropdown — always visible */}
+      <div style={{...S.card, padding:"14px 20px", marginBottom:20, display:"flex", alignItems:"center", gap:14, flexWrap:"wrap"}}>
+        <div style={{fontSize:12, color:T.muted, fontWeight:700, whiteSpace:"nowrap"}}>🔖 Jump to Report:</div>
+        <select
+          style={{...S.input, flex:1, cursor:"pointer", minWidth:200}}
+          value={activeReport||""}
+          onChange={e => {
+            const id = parseInt(e.target.value);
+            setActiveReport(id||null);
+            if (id) {
+              setTimeout(()=>{
+                document.getElementById(`case-report-card-${id}`)?.scrollIntoView({behavior:"smooth", block:"start"});
+              }, 50);
+            }
+          }}
+        >
+          <option value="">— Select a report —</option>
+          {reports.map(r=>{
+            const p = r.parsed;
+            const scored = r.phase==="done" && p;
+            const verdict = p?.verdict?.includes("Approved")?"✅":p?.verdict?.includes("Borderline")?"⚠️":scored?"❌":"";
+            return (
+              <option key={r.id} value={r.id}>
+                {scored
+                  ? `${verdict} ${r.label} · ${p?.weighted??0}/100 · ${p?.verdict||"—"} · ${r.file?.name||""}`
+                  : `${r.label}${r.phase==="idle"?" · Not yet uploaded":r.phase==="ready"?" · Ready to score":r.phase==="running"?" · Analyzing...":""}`
+                }
+              </option>
+            );
+          })}
+        </select>
+        <div style={{fontSize:11, color:T.muted}}>
+          {reports.filter(r=>r.phase==="done"&&r.parsed).length} of 4 scored
+        </div>
       </div>
 
       <div style={{...S.card, background:T.amberSoft, border:`1px solid ${T.amber}44`, marginBottom:24}}>
@@ -1564,7 +1964,10 @@ function CaseReportTab({reportScores, setReportScores}) {
         const ready   = rpt.phase==="ready";
 
         return (
-          <div key={rpt.id} style={{...S.card, marginBottom:20}}>
+          <div key={rpt.id} id={`case-report-card-${rpt.id}`}
+          style={{...S.card, marginBottom:20,
+            outline: activeReport===rpt.id ? `2px solid ${T.violet}` : "none",
+            transition:"outline 0.2s"}}>
 
             {/* Header */}
             <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:12}}>
@@ -2672,9 +3075,11 @@ export default function App() {
   const [asaCounts,setAsaCounts]=useState({I:0,II:0,III:0,IV:0,V:0,E:0});
   const [sedationOnly,setSedationOnly]=useState(0);
   const [reportScores,setReportScores]=useState([null,null,null,null]);
+  const [reportUploadCount,setReportUploadCount]=useState(0);
   const [ceHours,setCeHours]=useState(0);
   const [coreSkillsPct,setCoreSkillsPct]=useState(0);
   const [suppSkillsPct,setSuppSkillsPct]=useState(0);
+  const [caseLogRecords,setCaseLogRecords]=useState([]);
   const [builderSections,setBuilderSections]=useState(
     Object.fromEntries(BUILDER_SECTIONS.map(s=>[s.id,{notes:"",polished:"",loading:false}]))
   );
@@ -2686,9 +3091,9 @@ export default function App() {
     const builderToSave = Object.fromEntries(
       Object.entries(builderSections).map(([k,v])=>[k,{notes:v.notes,polished:v.polished}])
     );
-    await storageSave({checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderToSave,savedAt:Date.now()});
+    await storageSave({checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderToSave,caseLogRecords,savedAt:Date.now()});
     setSavedIndicator(true);
-  },[checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderSections]);
+  },[checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderSections,caseLogRecords]);
 
   // load on mount — pulls from Supabase cloud
   useEffect(()=>{
@@ -2703,6 +3108,7 @@ export default function App() {
       if(d.ceHours)setCeHours(d.ceHours);
       if(d.coreSkillsPct!=null)setCoreSkillsPct(d.coreSkillsPct);
       if(d.suppSkillsPct!=null)setSuppSkillsPct(d.suppSkillsPct);
+      if(d.caseLogRecords) setCaseLogRecords(d.caseLogRecords);
       if(d.builderToSave){
         setBuilderSections(prev=>{
           const merged={...prev};
@@ -2727,7 +3133,7 @@ export default function App() {
     const data = {
       checked, caseLogCount, asaCounts, sedationOnly,
       reportScores, ceHours, coreSkillsPct, suppSkillsPct,
-      builderToSave, savedAt: Date.now(), version: "vtsc_v1",
+      builderToSave, caseLogRecords, savedAt: Date.now(), version: "vtsc_v1",
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
     const url  = URL.createObjectURL(blob);
@@ -2759,6 +3165,7 @@ export default function App() {
           if (d.ceHours)              setCeHours(d.ceHours);
           if (d.coreSkillsPct != null) setCoreSkillsPct(d.coreSkillsPct);
           if (d.suppSkillsPct != null) setSuppSkillsPct(d.suppSkillsPct);
+          if (d.caseLogRecords) setCaseLogRecords(d.caseLogRecords);
           if (d.builderToSave) {
             setBuilderSections(prev => {
               const merged = {...prev};
@@ -2867,11 +3274,11 @@ export default function App() {
 
       {/* Content */}
       <div style={{padding:"30px 40px",maxWidth:1200,margin:"0 auto"}}>
-        {tab==="readiness"&&<ReadinessTab checked={checked} caseLogCount={caseLogCount} asaCounts={asaCounts} sedationOnly={sedationOnly} reportScores={reportScores} ceHours={ceHours} coreSkillsPct={coreSkillsPct} suppSkillsPct={suppSkillsPct}/>}
+        {tab==="readiness"&&<ReadinessTab checked={checked} caseLogCount={caseLogCount} caseLogRecords={caseLogRecords} asaCounts={asaCounts} sedationOnly={sedationOnly} reportScores={reportScores} reportUploadCount={reportUploadCount} ceHours={ceHours} coreSkillsPct={coreSkillsPct} suppSkillsPct={suppSkillsPct}/>}
         {tab==="checklist"&&<ChecklistTab checked={checked} setChecked={setCheckedWrapped}/>}
         {tab==="rejection"&&<RejectionTab/>}
-        {tab==="caselogs"&&<CaseLogTab caseLogCount={caseLogCount} setCaseLogCount={setCaseLogCount} asaCounts={asaCounts} setAsaCounts={setAsaCounts} sedationOnly={sedationOnly} setSedationOnly={setSedationOnly}/>}
-        {tab==="reports"&&<CaseReportTab reportScores={reportScores} setReportScores={setReportScores}/>}
+        {tab==="caselogs"&&<CaseLogTab caseLogCount={caseLogCount} setCaseLogCount={setCaseLogCount} asaCounts={asaCounts} setAsaCounts={setAsaCounts} sedationOnly={sedationOnly} setSedationOnly={setSedationOnly} caseLogRecords={caseLogRecords} setCaseLogRecords={setCaseLogRecords}/>}
+        {tab==="reports"&&<CaseReportTab reportScores={reportScores} setReportScores={setReportScores} setReportUploadCount={setReportUploadCount}/>}
         {tab==="builder"&&<CaseReportBuilderTab builderSections={builderSections} setBuilderSections={setBuilderSections}/>}
         {tab==="skills"&&<SkillsTab coreSkillsPct={coreSkillsPct} setCoreSkillsPct={setCoreSkillsPct} suppSkillsPct={suppSkillsPct} setSuppSkillsPct={setSuppSkillsPct}/>}
         {tab==="ce"&&<CETab ceHours={ceHours} setCeHours={setCeHours}/>}
