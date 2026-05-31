@@ -668,7 +668,7 @@ function RejectionTab() {
                 const res = await fetch("/api/claude", {
                   method:"POST", headers:{"Content-Type":"application/json"},
                   body: JSON.stringify({
-                    model:"claude-sonnet-4-20250514", max_tokens:2000,
+                    model:"claude-sonnet-4-5-20250929", max_tokens:2000,
                     messages:[{role:"user", content:[
                       {type: isImage ? "image" : "document",
                        source:{type:"base64", media_type:mediaType, data:base64}},
@@ -677,6 +677,7 @@ function RejectionTab() {
                   })
                 });
                 const d = await res.json();
+                if (d.error) { reject(new Error(d.error.message || "Extraction error")); return; }
                 resolve(d.content?.map(b=>b.text||"").join("") || "");
               } catch(e) { reject(e); }
             };
@@ -1182,7 +1183,7 @@ ${caseLogRecords.map((r,i) => `
               const res = await fetch("/api/claude", {
                 method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify({
-                  model:"claude-sonnet-4-20250514", max_tokens:1400,
+                  model:"claude-sonnet-4-5-20250929", max_tokens:1400,
                   messages:[{role:"user", content:[
                     {type:"document", source:{type:"base64", media_type:"application/pdf", data:base64}},
                     {type:"text", text:"Extract ALL text from this AVTAA case log PDF exactly as written. Preserve all case numbers, dates, drug names, doses, and descriptions. Return only the document text."}
@@ -1190,6 +1191,7 @@ ${caseLogRecords.map((r,i) => `
                 })
               });
               const d = await res.json();
+              if (d.error) { reject(new Error(d.error.message || "Extraction API error")); return; }
               resolve(d.content?.map(b=>b.text||"").join("") || "");
             } catch(e) { reject(e); }
           };
@@ -1842,7 +1844,7 @@ function CaseReportTab({reportScores, setReportScores, setReportUploadCount}) {
               const res = await fetch("/api/claude", {
                 method:"POST", headers:{"Content-Type":"application/json"},
                 body: JSON.stringify({
-                  model:"claude-sonnet-4-20250514", max_tokens:1200,
+                  model:"claude-sonnet-4-5-20250929", max_tokens:1200,
                   messages:[{role:"user", content:[
                     {type:"document", source:{type:"base64", media_type:"application/pdf", data:base64}},
                     {type:"text", text:"Extract ALL text from this document exactly as written. Return only the document text, preserving section headers."}
@@ -1850,6 +1852,7 @@ function CaseReportTab({reportScores, setReportScores, setReportUploadCount}) {
                 })
               });
               const d = await res.json();
+              if (d.error) { reject(new Error(d.error.message || "Extraction API error")); return; }
               resolve(d.content?.map(b=>b.text||"").join("") || "");
             } catch(e) { reject(e); }
           };
