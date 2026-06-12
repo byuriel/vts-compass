@@ -1161,6 +1161,7 @@ ${caseLogRecords.map((r,i) => `
   };
 
   const deleteCase = (num) => {
+    if (!confirm(`Delete Case Log #${num} from your records? This cannot be undone.`)) return;
     setCaseLogRecords(prev=>prev.filter(r=>r.num!==num));
     if(selectedCase===num) setSelectedCase(null);
   };
@@ -1484,6 +1485,10 @@ ${caseLogRecords.map((r,i) => `
           <div style={{marginTop:14,display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
             <button style={{...S.btn("primary"),padding:"11px 24px"}} onClick={run} disabled={state.phase==="running"}>
               {state.phase==="done"?"🔄 Re-Audit Case Log":"🔍 Run Full Compliance Audit"}
+            </button>
+            <button style={{...S.btn("ghost"),padding:"11px 18px",border:`1px solid ${T.red}44`,color:T.red}}
+              onClick={()=>{ if(confirm("Remove this uploaded case log file and its audit results?")) setState(blank()); }}>
+              🗑 Delete File
             </button>
             {state.phase==="done"&&state.text&&(
               <span style={{fontSize:12,color:T.muted}}>{state.text.split(/\s+/).filter(Boolean).length.toLocaleString()} words extracted</span>
@@ -2039,12 +2044,27 @@ function CaseReportTab({reportScores, setReportScores, setReportUploadCount}) {
                       <div style={{fontSize:11, color:T.muted}}>{rpt.text?.split(/\s+/).filter(Boolean).length.toLocaleString()} words scored</div>
                     </div>
                   </div>
-                  <button
-                    style={{...S.btn("ghost"), fontSize:11, padding:"5px 12px", border:`1px solid ${T.border}`, color:T.sub}}
-                    onClick={() => patch(rpt.id, {showReplace: !rpt.showReplace})}
-                  >
-                    {rpt.showReplace ? "✕ Cancel" : "📂 Upload New File"}
-                  </button>
+                  <div style={{display:"flex", gap:8}}>
+                    <button
+                      style={{...S.btn("ghost"), fontSize:11, padding:"5px 12px", border:`1px solid ${T.border}`, color:T.sub}}
+                      onClick={() => patch(rpt.id, {showReplace: !rpt.showReplace})}
+                    >
+                      {rpt.showReplace ? "✕ Cancel" : "📂 Upload New File"}
+                    </button>
+                    <button
+                      style={{...S.btn("ghost"), fontSize:11, padding:"5px 12px", border:`1px solid ${T.red}44`, color:T.red}}
+                      onClick={() => {
+                        if (confirm(`Delete ${rpt.label} and its score? This cannot be undone.`)) {
+                          patch(rpt.id, blank(rpt.id));
+                          const idx = rpt.id - 1;
+                          setReportScores(prev => { const c=[...prev]; c[idx]=null; return c; });
+                          setReports(prev => { setReportUploadCount(prev.filter(r=>r.id!==rpt.id&&(r.file||r.phase==="done")).length); return prev; });
+                        }
+                      }}
+                    >
+                      🗑 Delete
+                    </button>
+                  </div>
                 </div>
 
                 {/* New file drop zone — only shown when she explicitly clicks Upload New */}
@@ -3095,9 +3115,9 @@ export default function App() {
     const builderToSave = Object.fromEntries(
       Object.entries(builderSections).map(([k,v])=>[k,{notes:v.notes,polished:v.polished}])
     );
-    await storageSave({checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderToSave,caseLogRecords,savedAt:Date.now()});
+    await storageSave({checked,caseLogCount,asaCounts,sedationOnly,reportScores,reportUploadCount,ceHours,coreSkillsPct,suppSkillsPct,builderToSave,caseLogRecords,savedAt:Date.now()});
     setSavedIndicator(true);
-  },[checked,caseLogCount,asaCounts,sedationOnly,reportScores,ceHours,coreSkillsPct,suppSkillsPct,builderSections,caseLogRecords]);
+  },[checked,caseLogCount,asaCounts,sedationOnly,reportScores,reportUploadCount,ceHours,coreSkillsPct,suppSkillsPct,builderSections,caseLogRecords]);
 
   // load on mount — pulls from Supabase cloud
   useEffect(()=>{
@@ -3109,6 +3129,7 @@ export default function App() {
       if(d.asaCounts)setAsaCounts(d.asaCounts);
       if(d.sedationOnly!=null)setSedationOnly(d.sedationOnly);
       if(d.reportScores)setReportScores(d.reportScores);
+      if(d.reportUploadCount!=null)setReportUploadCount(d.reportUploadCount);
       if(d.ceHours)setCeHours(d.ceHours);
       if(d.coreSkillsPct!=null)setCoreSkillsPct(d.coreSkillsPct);
       if(d.suppSkillsPct!=null)setSuppSkillsPct(d.suppSkillsPct);
@@ -3136,7 +3157,7 @@ export default function App() {
     );
     const data = {
       checked, caseLogCount, asaCounts, sedationOnly,
-      reportScores, ceHours, coreSkillsPct, suppSkillsPct,
+      reportScores, reportUploadCount, ceHours, coreSkillsPct, suppSkillsPct,
       builderToSave, caseLogRecords, savedAt: Date.now(), version: "vtsc_v1",
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
@@ -3166,6 +3187,7 @@ export default function App() {
           if (d.asaCounts)            setAsaCounts(d.asaCounts);
           if (d.sedationOnly != null) setSedationOnly(d.sedationOnly);
           if (d.reportScores)         setReportScores(d.reportScores);
+          if (d.reportUploadCount != null) setReportUploadCount(d.reportUploadCount);
           if (d.ceHours)              setCeHours(d.ceHours);
           if (d.coreSkillsPct != null) setCoreSkillsPct(d.coreSkillsPct);
           if (d.suppSkillsPct != null) setSuppSkillsPct(d.suppSkillsPct);
@@ -3279,7 +3301,7 @@ export default function App() {
       {/* Content */}
       <div style={{padding:"30px 40px",maxWidth:1200,margin:"0 auto"}}>
         {tab==="readiness"&&<ReadinessTab checked={checked} caseLogCount={caseLogCount} caseLogRecords={caseLogRecords} asaCounts={asaCounts} sedationOnly={sedationOnly} reportScores={reportScores} reportUploadCount={reportUploadCount} ceHours={ceHours} coreSkillsPct={coreSkillsPct} suppSkillsPct={suppSkillsPct}/>}
-        {tab==="checklist"&&<ChecklistTab checked={checked} setChecked={setCheckedWrapped}/>}
+        {tab==="checklist"&&<ChecklistTab checked={checked} setChecked={setChecked}/>}
         {tab==="rejection"&&<RejectionTab/>}
         {tab==="caselogs"&&<CaseLogTab caseLogCount={caseLogCount} setCaseLogCount={setCaseLogCount} asaCounts={asaCounts} setAsaCounts={setAsaCounts} sedationOnly={sedationOnly} setSedationOnly={setSedationOnly} caseLogRecords={caseLogRecords} setCaseLogRecords={setCaseLogRecords}/>}
         {tab==="reports"&&<CaseReportTab reportScores={reportScores} setReportScores={setReportScores} setReportUploadCount={setReportUploadCount}/>}
